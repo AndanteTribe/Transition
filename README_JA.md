@@ -23,6 +23,10 @@
 https://github.com/AndanteTribe/Transition.git?path=src/Transition.Unity/Packages/jp.andantetribe.transition
 ```
 
+## セットアップ
+
+Unity が最初に起動するシーン（`File > Build Settings` で設定）は **必ず `"System"` という名前にしてください**。この名前は `RestartAsync` が初期シーンをリロードする際に内部で使用されます。
+
 ## クイックスタート
 
 ```csharp

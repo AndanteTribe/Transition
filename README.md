@@ -23,6 +23,10 @@ Open `Window > Package Manager`, select `[+] > Add package from git URL`, and en
 https://github.com/AndanteTribe/Transition.git?path=src/Transition.Unity/Packages/jp.andantetribe.transition
 ```
 
+## Setup
+
+The scene that Unity launches first (set via `File > Build Settings`) **must be named `"System"`**. This name is used internally by `RestartAsync` to reload the initial scene.
+
 ## Quick Start
 
 ```csharp
