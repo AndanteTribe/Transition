@@ -55,14 +55,13 @@ namespace Transition
         /// <param name="cancellationToken">Cancellation token.</param>
         public async UniTask LoadAsync(TEnum sceneName, IProgress<float>? progress, CancellationToken cancellationToken)
         {
-            var array = ArrayPool<SceneInfo>.Shared.Rent(_activeScenes.Count);
+            using var _ = await _semaphore.WaitScopeAsync(cancellationToken);
+            using var __ = ArrayPool<SceneInfo>.Shared.Rent(_activeScenes.Count, out var array);
             _activeScenes.CopyTo(array);
             var activeScenes = new ArraySegment<SceneInfo>(array, 0, _activeScenes.Count);
 
             try
             {
-                await _semaphore.WaitAsync(cancellationToken);
-
                 foreach (var flag in sceneName)
                 {
                     if (!CurrentScene.HasBitFlags(flag))
@@ -107,11 +106,6 @@ namespace Transition
 
                     return activeScenes.AggregateFlags();
                 }
-            }
-            finally
-            {
-                ArrayPool<SceneInfo>.Shared.Return(array);
-                _semaphore.Release();
             }
         }
 
