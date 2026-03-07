@@ -1,0 +1,17 @@
+{
+  "name": "jp.andantetribe.transition",
+  "displayName": "Transition",
+  "author": {
+    "name": "AndanteTribe",
+    "url": "https://github.com/AndanteTribe"
+  },
+  "version": "0.1.0",
+  "unity": "2021.3",
+  "description": "Scene transition system built on Addressables.",
+  "license": "MIT",
+  "dependencies": {
+    "jp.andantetribe.unitaskplus": "0.1.0",
+    "com.cysharp.unitask": "2.5.10",
+    "com.unity.addressables": "1.19.19"
+  }
+}
