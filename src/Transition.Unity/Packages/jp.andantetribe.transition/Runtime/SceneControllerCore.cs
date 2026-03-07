@@ -14,11 +14,11 @@ using UnityEngine.SceneManagement;
 namespace Transition
 {
     /// <summary>
-    /// 汎用シーン遷移実装.
+    /// Generic scene transition implementation.
     /// </summary>
     public class SceneControllerCore<TEnum> where TEnum : unmanaged, Enum
     {
-        // Systemシーンをシングルロードすることを「再起動」と定義する.
+        // Define "restart" as loading the System scene in Single mode.
         private const string DefaultSceneName = "System";
 
         private readonly Func<TEnum, string> _getSceneName;
@@ -26,14 +26,14 @@ namespace Transition
         private readonly UniTaskSemaphore _semaphore = new(1, 1);
 
         /// <summary>
-        /// 現在のシーン名.
+        /// Current scene name.
         /// </summary>
         public TEnum CurrentScene { get; private set; }
 
         /// <summary>
         /// Initialize a new instance of <see cref="SceneControllerCore{TEnum}"/>.
         /// </summary>
-        /// <param name="getSceneName">シーン名取得関数.</param>
+        /// <param name="getSceneName">Function to get the scene name.</param>
         public SceneControllerCore(Func<TEnum, string>? getSceneName = null)
         {
             _getSceneName = getSceneName ?? (static enumValue => enumValue.ToString());
@@ -48,11 +48,11 @@ namespace Transition
         }
 
         /// <summary>
-        /// シーンを非同期でロードします.
+        /// Loads scenes asynchronously.
         /// </summary>
-        /// <param name="sceneName"></param>
-        /// <param name="progress"></param>
-        /// <param name="cancellationToken"></param>
+        /// <param name="sceneName">Target scene flags.</param>
+        /// <param name="progress">Progress reporter.</param>
+        /// <param name="cancellationToken">Cancellation token.</param>
         public async UniTask LoadAsync(TEnum sceneName, IProgress<float>? progress, CancellationToken cancellationToken)
         {
             var array = ArrayPool<SceneInfo>.Shared.Rent(_activeScenes.Count);
@@ -67,7 +67,7 @@ namespace Transition
                 {
                     if (!CurrentScene.HasBitFlags(flag))
                     {
-                        // HACK: UniTask側でprogressがnullかどうか判定しているので、ここで判定する必要なし.
+                        // HACK: UniTask checks whether progress is null internally, so no null check is needed here.
                         var scene = await Addressables.LoadSceneAsync(_getSceneName(flag), LoadSceneMode.Additive)
                             .ToUniTask(progress!, cancellationToken: cancellationToken, autoReleaseWhenCanceled: true);
                         var info = new SceneInfo(flag, scene);
@@ -92,7 +92,7 @@ namespace Transition
             }
             catch (Exception)
             {
-                // ロードに失敗した場合は現時点でロードされているシーンを再計算する.
+                // If loading fails, recompute the currently loaded scenes.
                 CurrentScene = AggregateFlags(_activeScenes.AsSpan());
                 throw;
 
@@ -116,10 +116,10 @@ namespace Transition
         }
 
         /// <summary>
-        /// すべてのシーンをアンロードします.
+        /// Unloads all scenes.
         /// </summary>
-        /// <param name="progress"></param>
-        /// <param name="cancellationToken"></param>
+        /// <param name="progress">Progress reporter.</param>
+        /// <param name="cancellationToken">Cancellation token.</param>
         public async UniTask UnloadAllAsync(IProgress<float>? progress, CancellationToken cancellationToken)
         {
             using var _ = await _semaphore.WaitScopeAsync(cancellationToken);
@@ -127,11 +127,11 @@ namespace Transition
         }
 
         /// <summary>
-        /// アプリを再起動します.
+        /// Restarts the application.
         /// </summary>
-        /// <param name="progress"></param>
-        /// <param name="forceImmediate"></param>
-        /// <param name="cancellationToken"></param>
+        /// <param name="progress">Progress reporter.</param>
+        /// <param name="forceImmediate">Whether to skip semaphore synchronization.</param>
+        /// <param name="cancellationToken">Cancellation token.</param>
         public async UniTask RestartAsync(IProgress<float>? progress, bool forceImmediate, CancellationToken cancellationToken)
         {
             if (forceImmediate)
