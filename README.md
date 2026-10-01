@@ -7,299 +7,244 @@
 English | [日本語](README_JA.md)
 
 ## Overview
-**Transition** is a Unity scene transition system that can load scenes through Addressables or Unity's `SceneManager`.
 
-You declare the final set of scenes you need. `SceneControllerCore<TScene>` compares that target with the scenes managed by the controller, loads any missing scenes, and unloads any scenes that are no longer needed — all in a single `LoadAsync` call.
+**Transition** loads the scenes you need and unloads the scenes you no longer need.
 
-Scene identifiers can be ordinary enums, bit-flag enums, strings, or your own value types. For normal target reconciliation, the Addressables and SceneManager-specific load/unload details are resolved by their respective loaders rather than by the core transition logic.
+Pass an ordinary enum to `SceneCollection<TScene>.SetAsync`. The collection compares the target with its managed scenes, loads missing scenes, then unloads obsolete scenes. Successful operations remain recorded even if a later operation fails. Calling `SetAsync` with the same target retries only the remaining work.
 
 ## Requirements
-- Unity 2021.3 or later
-- [Addressables](https://docs.unity3d.com/Manual/com.unity.addressables.html) 1.19.19 or later
-- [UniTask](https://github.com/Cysharp/UniTask) 2.5.10 or later
-- [UniTaskPlus](https://github.com/AndanteTribe/UniTaskPlus) 0.1.0 or later
+
+- Unity 2021.3 or later (C# 9 / .NET Standard 2.1).
+- [UniTask](https://github.com/Cysharp/UniTask) 2.5.10 or later.
+- [Addressables](https://docs.unity3d.com/Packages/com.unity.addressables@1.19/manual/index.html) 1.19.19 or later, only for the optional Addressables package.
 
 ## Installation
-Open `Window > Package Manager`, select `[+] > Add package from git URL`, and enter the following URL:
 
-```
+Install UniTask first. In `Window > Package Manager > [+] > Add package from git URL`, add:
+
+```text
 https://github.com/AndanteTribe/Transition.git?path=src/Transition.Unity/Packages/jp.andantetribe.transition
 ```
 
-## Setup
+For Addressables, also add:
 
-When using `RestartAsync`, add a scene named **`"System"`** to `File > Build Settings`. `RestartAsync` loads this scene in Single mode as the application's initial scene.
+```text
+https://github.com/AndanteTribe/Transition.git?path=src/Transition.Unity/Packages/jp.andantetribe.transition.addressables
+```
 
-- When using Addressables, register each target scene with Addressables.
-- When using `SceneManager`, add each target scene to `File > Build Settings`.
-- If your own asmdef explicitly selects its references, reference `Transition`. Also reference `Transition.Addressables` when using `AddressablesSceneController`.
+Install the core package before the Addressables package. If you use your own asmdef, reference `Transition`; also reference `Transition.Addressables` when using `AddressablesSceneCollection` or `AddressablesBackend`.
 
 ## Quick Start
 
-The following example uses bit-flag identifiers with Addressables.
+Start the application in a bootstrap scene named `System`. Keep it outside the collection and leave it loaded. Add `System` and the following gameplay scenes to Build Settings.
 
 ```csharp
-using System;
 using System.Threading;
 using Cysharp.Threading.Tasks;
 using Transition;
 
-// A flags controller requires [Flags] and int as the underlying type.
-[Flags]
-public enum SceneName : int
+public enum GameScene
 {
-    None  = 0,
-    Title = 1 << 0,
-    Game  = 1 << 1,
-    HUD   = 1 << 2,
+    Title,
+    Game,
+    UI,
 }
 
 public sealed class GameFlow
 {
-    private readonly SceneControllerCore<SceneName> _controller =
-        AddressablesSceneController.CreateFlags<SceneName>();
+    private readonly SceneCollection<GameScene> _scenes =
+        SceneCollection.Create<GameScene>();
 
     public async UniTask RunAsync(CancellationToken cancellationToken)
     {
-        // Load Game and HUD additively. Managed scenes outside this target are unloaded.
-        await _controller.LoadAsync(
-            progress: null,
-            cancellationToken,
-            SceneName.Game | SceneName.HUD);
+        await _scenes.SetAsync(GameScene.Title, GameScene.UI, cancellationToken);
 
-        // Transition to Title, unloading Game and HUD.
-        await _controller.LoadAsync(
-            progress: null,
-            cancellationToken,
-            SceneName.Title);
+        // Keeps UI, loads Game, then unloads Title.
+        await _scenes.SetAsync(GameScene.Game, GameScene.UI, cancellationToken);
 
-        // The current state is exposed as a SceneSet, even for a flags controller.
-        var currentFlags = _controller.CurrentScenes.ToFlags();
-
-        await _controller.UnloadAllAsync(progress: null, cancellationToken);
-
-        // Unload managed scenes and reload System in Single mode.
-        await _controller.RestartAsync(
-            progress: null,
-            forceImmediate: false,
-            cancellationToken);
+        // Releases managed scenes and restarts from System.
+        await _scenes.ResetAsync(cancellationToken);
     }
 }
 ```
+
+`SceneCollection.Create<TScene>()` creates a SceneManager-backed collection. Enum names are scene names by default. Zero is an ordinary scene identifier. Do not use bit flags; there is no 32-scene limit.
+
+Call collection APIs on Unity's main thread and await the returned UniTask. A backend belongs to one collection; do not share it or operate it directly after passing it to the collection.
 
 ## Addressables
 
-### Using ordinary scene identifiers
-
-Use `CreateScenes` when each enum value represents one scene rather than a collection of bit flags. Multiple target scenes can be passed directly without manually creating a `SceneSet`.
+Register gameplay scenes with Addressables and give them addresses matching the enum names. The bootstrap/reset scene stays in Build Settings.
 
 ```csharp
-public enum GameScene
-{
-    Title,
-    Stage100,
-    UserInterface,
-}
+var scenes = AddressablesSceneCollection.Create<GameScene>();
 
-private readonly SceneControllerCore<GameScene> _controller =
-    AddressablesSceneController.CreateScenes<GameScene>();
-
-await _controller.LoadAsync(
-    cancellationToken,
-    GameScene.Stage100,
-    GameScene.UserInterface);
+await scenes.SetAsync(GameScene.Game, GameScene.UI, cancellationToken);
 ```
 
-By default, `ToString()` is used as the Addressables address. Supply a resolver when the logical scene identifier and Addressables address differ.
+To use different addresses:
 
 ```csharp
-private readonly SceneControllerCore<GameScene> _controller =
-    AddressablesSceneController.CreateScenes<GameScene>(static scene => scene switch
+var scenes = AddressablesSceneCollection.Create<GameScene>(
+    getSceneName: static scene => scene switch
     {
-        GameScene.Title         => "Scenes/Title",
-        GameScene.Stage100      => "Scenes/Stage100",
-        GameScene.UserInterface => "Scenes/UI",
-        _ => throw new ArgumentOutOfRangeException(nameof(scene)),
+        GameScene.Title => "Scenes/Title",
+        GameScene.Game  => "Scenes/MainGame",
+        GameScene.UI    => "Scenes/SharedUI",
+        _ => throw new System.ArgumentOutOfRangeException(nameof(scene)),
     });
 ```
+
+Addresses must identify individual, distinct scenes, not multi-scene labels. Different enum values mapping to the same physical scene are not automatically deduplicated.
 
 ## SceneManager
 
-Use `SceneManagerController` to load scenes from Build Settings without using Addressables APIs.
+`SceneManagerBackend` uses additive loading and stores the exact loaded Unity Scene internally. A resolver can map enum values to full Build Settings paths:
 
 ```csharp
-private readonly SceneControllerCore<GameScene> _controller =
-    SceneManagerController.CreateScenes<GameScene>();
-
-await _controller.LoadAsync(
-    cancellationToken,
-    GameScene.Stage100,
-    GameScene.UserInterface);
-```
-
-By default, `ToString()` is used as the scene name. A resolver can return either a scene name or a path from Build Settings.
-
-```csharp
-private readonly SceneControllerCore<GameScene> _controller =
-    SceneManagerController.CreateScenes<GameScene>(static scene => scene switch
+var scenes = SceneCollection.Create<GameScene>(
+    getSceneName: static scene => scene switch
     {
-        GameScene.Title         => "Assets/Scenes/Title.unity",
-        GameScene.Stage100      => "Assets/Scenes/Stage100.unity",
-        GameScene.UserInterface => "Assets/Scenes/UI.unity",
-        _ => throw new ArgumentOutOfRangeException(nameof(scene)),
-    });
+        GameScene.Title => "Assets/Scenes/Title.unity",
+        GameScene.Game  => "Assets/Scenes/Game.unity",
+        GameScene.UI    => "Assets/Scenes/UI.unity",
+        _ => throw new System.ArgumentOutOfRangeException(nameof(scene)),
+    },
+    initialSceneName: "Boot");
 ```
 
-`SceneManagerController.CreateFlags<TEnum>()` is also available when you want to use the bit-flag input style with Build Settings scenes.
+Ambiguous short names are rejected; use full paths when names collide. Already-loaded scenes are not adopted. Do not load or unload the same physical scenes outside the backend during its ownership.
 
-## Bit Flags
+## Scene Targets and Current State
 
-Bit flags provide a convenient input format for selecting multiple scenes.
+Fixed overloads accept one to five scenes with an optional final CancellationToken:
 
 ```csharp
-[Flags]
-public enum SceneName : int
+await scenes.SetAsync(GameScene.Game);
+await scenes.SetAsync(GameScene.Game, GameScene.UI, cancellationToken);
+
+// Duplicate identifiers are ignored, keeping their first occurrence.
+await scenes.SetAsync(GameScene.Game, GameScene.UI, GameScene.Game);
+
+// Empty target: unload all managed scenes, leaving the bootstrap scene.
+await scenes.SetAsync(cancellationToken);
+
+bool hasUI = scenes.Contains(GameScene.UI);
+int count = scenes.Count;
+GameScene[] snapshot = scenes.GetCurrentScenes();
+```
+
+`GetCurrentScenes()` returns an independent array in successful-load completion order. The collection does not expose a mutable list or a live view.
+
+Use `ReadOnlyMemory<TScene>` for larger or reusable targets:
+
+```csharp
+GameScene[] target = { GameScene.Game, GameScene.UI };
+await scenes.SetAsync(target, cancellationToken);
+```
+
+One-to-five-scene overloads store input inline without a per-call params array or HashSet. Memory targets up to five scenes also copy inline. Larger targets copy to a private array before queuing so later changes to the caller's buffer cannot change an in-flight request. This is not a promise that every transition or backend performs zero allocations.
+
+## Sequential / Parallel
+
+Choose the mode once when creating the collection:
+
+```csharp
+var scenes = AddressablesSceneCollection.Create<GameScene>(
+    loadingMode: SceneLoadingMode.Parallel);
+```
+
+- `Sequential` (default): missing scenes load in target order. Use this when a scene depends on a previously loaded scene.
+- `Parallel`: missing scenes within one Set call start concurrently. Every started operation is observed, even after another fails or cancels.
+- Set and Reset calls on the same collection are always serialized.
+- Unloads are sequential, in reverse successful-load completion order.
+- Load failure/cancellation prevents the unload phase. Unload failure stops further unloads.
+
+Parallel mode provides no scene initialization order guarantee. Multiple faults produce an `AggregateException`; cancellation-only outcomes produce an `OperationCanceledException`.
+
+## Failure and Cancellation
+
+Completed work is retained; there is no transition-wide rollback.
+
+For example, if the current state is `Title + UI` and the target is `Game + UI + Audio`, a successful Game load followed by a failed Audio load leaves `Title + UI + Game`. Retry the same target to load Audio and then unload Title.
+
+Cancellation prevents new operations from starting. Already-started operations are observed until the backend reaches a stable state. Unity's built-in backends finish an already-started physical operation even after cancellation. The collection records that success before reporting cancellation.
+
+If Game and Audio succeed while UI cancels in Parallel mode, Game and Audio remain managed, old scenes remain loaded, and Set reports cancellation. Inspect `Contains`, `Count`, or `GetCurrentScenes()` after catching an exception.
+
+## Reset
+
+`ResetAsync` uses the same transition gate as Set. It validates the initial Build Settings scene, unloads owned scenes through the backend, then directly loads the initial scene with `SceneManager.LoadSceneAsync(..., LoadSceneMode.Single)`.
+
+```csharp
+var scenes = SceneCollection.Create<GameScene>(initialSceneName: "Boot");
+
+await scenes.ResetAsync(cancellationToken);
+```
+
+On success, the managed collection is empty. Boot/System remains outside the collection, and the same collection/backend can be reused.
+
+Cancellation is honored before Single loading starts. Once it starts, Reset waits for completion and returns success even if the token is subsequently canceled. An earlier unload failure/cancellation retains still-owned scenes for retry.
+
+Single loading affects the whole Unity scene environment, including scenes outside this collection. Use Reset as an application-level restart; do not run another collection or external scene operations alongside it.
+
+Unity cannot unload its last loaded scene. Keep the bootstrap scene outside the collection for empty targets and Reset. See [Unity's UnloadSceneAsync API](https://docs.unity3d.com/2021.3/Documentation/ScriptReference/SceneManagement.SceneManager.UnloadSceneAsync.html).
+
+## Custom Backends
+
+The factories create a dedicated standard backend for each collection. To supply a custom backend, use the constructor directly: `new SceneCollection<GameScene>(backend)`.
+
+Implement these two methods:
+
+```csharp
+public interface ISceneBackend<TScene> where TScene : struct, System.Enum
 {
-    None  = 0,
-    Title = 1 << 0,
-    Game  = 1 << 1,
-    HUD   = 1 << 2,
+    UniTask LoadAsync(TScene scene, CancellationToken cancellationToken = default);
+    UniTask UnloadAsync(TScene scene, CancellationToken cancellationToken = default);
 }
-
-var controller = AddressablesSceneController.CreateFlags<SceneName>();
-
-await controller.LoadAsync(
-    progress: null,
-    cancellationToken,
-    SceneName.Game | SceneName.HUD);
 ```
 
-A flags enum must:
+The backend handles only one scene per operation and stores its own physical scene/resource ownership. The collection handles targets, deduplication, ordering, serialization, and Reset.
 
-- have `[Flags]`;
-- use `int` as its underlying type;
-- use `0` for the empty value;
-- use one bit for each individual scene.
+The contract is:
 
-Because an `int` has 32 bits, the flags input format is limited to 32 individual values. This limit applies only to flags. `CreateScenes` and `SceneSet<TScene>` can represent larger scene collections.
+| Outcome | Required state |
+|---------|----------------|
+| Load succeeds | The scene is fully loaded and owned by the backend. |
+| Load fails or cancels | No new ownership from that operation remains; the same identifier can be retried. |
+| Unload succeeds | The scene is fully unloaded and its ownership is released. |
+| Unload fails or cancels | The loaded scene and its ownership remain intact and can be retried. |
 
-Use `SceneSet.FromFlags` and `ToFlags` when converting explicitly:
+Use the token while cancellation is safe. After the point of no cancellation, finish and return success. Never cancel only the await while a physical operation continues unobserved. If Unload has already physically succeeded, do not throw cancellation afterward.
+
+A typical non-cancelable engine load follows this sequence:
 
 ```csharp
-SceneSet<SceneName> target =
-    SceneSet.FromFlags(SceneName.Game | SceneName.HUD);
-
-SceneName flags = target.ToFlags();
+cancellationToken.ThrowIfCancellationRequested();
+var operation = StartPhysicalLoad(scene);
+// Point of no cancellation.
+await operation.ToUniTask(cancellationToken: CancellationToken.None);
+// Record backend ownership, then return success.
 ```
 
-`SceneSet.Of(SceneName.Game | SceneName.HUD)` creates one composite identifier; it does not split the value into individual flags. Use `SceneSet.FromFlags` for that purpose.
+`StartPhysicalLoad` is a placeholder for your engine/resource API. Reserve ownership bookkeeping before physical work where needed, and clean up failed loads before returning an error.
 
-## SceneSet
-
-`SceneSet<TScene>` is an immutable collection that removes duplicate identifiers while preserving their first-occurrence load order.
-
-```csharp
-SceneSet<GameScene> target = SceneSet.Of(
-    GameScene.Stage100,
-    GameScene.UserInterface);
-
-await _controller.LoadAsync(
-    target,
-    progress: null,
-    cancellationToken);
-```
-
-Use `With` to derive a target from a reusable scene set. The original set is not modified.
-
-```csharp
-SceneSet<GameScene> sharedUI = SceneSet.Of(
-    GameScene.UserInterface);
-
-SceneSet<GameScene> stage100 = sharedUI.With(
-    GameScene.Stage100);
-
-await _controller.LoadAsync(
-    stage100,
-    progress: null,
-    cancellationToken);
-```
-
-Use `SceneSet<TScene>.Empty` for an explicit empty target. Calling `LoadAsync` with an empty target unloads every scene managed by that controller.
-
-```csharp
-await _controller.LoadAsync(
-    SceneSet<GameScene>.Empty,
-    progress: null,
-    cancellationToken);
-```
-
-Only scenes loaded through a controller are represented by its `CurrentScenes` and reconciled by that controller. Scenes loaded or unloaded externally are not automatically synchronized with its state.
-
-## Custom Scene Loaders
-
-For another loading backend, implement `ISceneLoader<TScene>`. A successful load returns an `ISceneHandle`, which represents ownership of that loaded scene and is later used by the controller to unload it. The following is an implementation skeleton; the actual load and handle logic depends on your backend.
-
-```csharp
-public sealed class CustomSceneLoader : ISceneLoader<GameScene>
-{
-    public UniTask<ISceneHandle> LoadAsync(
-        GameScene scene,
-        IProgress<float>? progress,
-        CancellationToken cancellationToken)
-    {
-        // Load one scene and return its lifetime.
-        throw new NotImplementedException();
-    }
-}
-
-var controller = new SceneControllerCore<GameScene>(new CustomSceneLoader());
-```
-
-The core API does not require an Addressables address, `AsyncOperationHandle`, `SceneInstance`, or release key. Backend-specific ownership remains inside the returned `ISceneHandle`.
-
-## Cancellation
-
-The built-in loaders check cancellation before starting a scene load. Once a Unity or Addressables load has started, they observe the physical operation and any required rollback before reporting cancellation. Once an unload has started, they also wait for that physical operation to finish before reporting cancellation.
-
-## Operational Notes
-
-- Normal controller operations are serialized. `RestartAsync(forceImmediate: true)` bypasses that serialization and must not run concurrently with another operation on the same controller. Use `false` for normal transitions.
-- `IProgress<float>` reports the progress of each individual scene operation. With multiple scenes, it is not a single monotonic progress value for the complete transition.
-- Different logical identifiers that resolve to the same physical scene are not automatically treated as duplicates.
-- The SceneManager loader does not support another loader concurrently loading the same scene, because Unity's `AsyncOperation` does not identify the `Scene` that it created.
+Different scene identifiers may be loaded concurrently in Parallel mode. Backend operations must not call and await Set/Reset on their owning collection: that would wait for the transition gate they already occupy. Complete Unity-related ownership work on the main thread.
 
 ## API
 
-### Controller Factories
-
 | Member | Description |
 |--------|-------------|
-| `AddressablesSceneController.CreateFlags<TEnum>(getSceneName?)` | Creates an Addressables-backed controller that expands bit flags. |
-| `AddressablesSceneController.CreateScenes<TScene>(getSceneName)` | Creates an Addressables-backed controller for ordinary scene identifiers. An enum overload uses `ToString()`. |
-| `SceneManagerController.CreateFlags<TEnum>(getSceneName?)` | Creates a SceneManager-backed controller that expands bit flags. |
-| `SceneManagerController.CreateScenes<TScene>(getSceneName)` | Creates a SceneManager-backed controller for ordinary scene identifiers. An enum overload uses `ToString()`. |
-
-### `SceneControllerCore<TScene>`
-
-| Member | Description |
-|--------|-------------|
-| `CurrentScenes` | Gets the scenes currently managed by this controller. |
-| `LoadAsync(params TScene[] targetScenes)` | Reconciles the managed scenes with the target identifiers. |
-| `LoadAsync(CancellationToken cancellationToken, params TScene[] targetScenes)` | Reconciles the managed scenes with the target identifiers and supports cancellation. |
-| `LoadAsync(IProgress<float>? progress, CancellationToken cancellationToken, params TScene[] targetScenes)` | Reconciles to multiple identifiers while reporting each scene operation's progress. |
-| `LoadAsync(SceneSet<TScene> targetScenes, IProgress<float>? progress, CancellationToken cancellationToken)` | Reconciles to an explicitly created scene set. |
-| `UnloadAllAsync(IProgress<float>? progress, CancellationToken cancellationToken)` | Unloads all scenes managed by this controller. |
-| `RestartAsync(IProgress<float>? progress, bool forceImmediate, CancellationToken cancellationToken)` | Unloads managed scenes and reloads `System` in Single mode. `forceImmediate: true` skips operation serialization. |
-
-### `SceneSet`
-
-| Member | Description |
-|--------|-------------|
-| `SceneSet.Of(params TScene[] scenes)` | Creates an ordered, duplicate-free set of identifiers. |
-| `sceneSet.With(params TScene[] scenes)` | Creates a new set by appending identifiers without modifying the original set. |
-| `SceneSet.FromFlags(params TEnum[] flags)` | Expands `int`-backed enum flags into individual identifiers. |
-| `sceneSet.ToFlags()` | Aggregates a flags scene set into one enum value. |
-| `SceneSet<TScene>.Empty` | Gets an empty target set. |
+| `SceneCollection.Create<TScene>(getSceneName = null, initialSceneName = "System", loadingMode = Sequential)` | Creates a SceneManager-backed collection. |
+| `AddressablesSceneCollection.Create<TScene>(getSceneName = null, initialSceneName = "System", loadingMode = Sequential)` | Creates an Addressables-backed collection. |
+| `new SceneCollection<TScene>(backend, initialSceneName = "System", loadingMode = Sequential)` | Creates a collection. |
+| `SetAsync(scene1, ..., scene5, cancellationToken = default)` | Fixed overloads for one to five target scenes. |
+| `SetAsync(ReadOnlyMemory<TScene>, cancellationToken = default)` | Target of any size. |
+| `SetAsync(cancellationToken = default)` | Empty target. |
+| `ResetAsync(cancellationToken = default)` | Releases ownership and reloads the initial scene. |
+| `Count` / `Contains(scene)` | Current owned state, including partial success. |
+| `GetCurrentScenes()` | Explicitly allocated state snapshot. |
 
 ## License
+
 This library is released under the MIT license.

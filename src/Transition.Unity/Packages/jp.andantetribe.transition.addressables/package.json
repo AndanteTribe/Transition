@@ -1,0 +1,17 @@
+{
+  "name": "jp.andantetribe.transition.addressables",
+  "displayName": "Transition Addressables",
+  "author": {
+    "name": "AndanteTribe",
+    "url": "https://github.com/AndanteTribe"
+  },
+  "version": "0.1.0",
+  "unity": "2021.3",
+  "description": "Addressables backend for Transition scene collections.",
+  "license": "MIT",
+  "dependencies": {
+    "jp.andantetribe.transition": "0.1.0",
+    "com.cysharp.unitask": "2.5.10",
+    "com.unity.addressables": "1.19.19"
+  }
+}

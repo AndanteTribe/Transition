@@ -7,299 +7,244 @@
 [English](README.md) | 日本語
 
 ## 概要
-**Transition** は、AddressablesまたはUnityの`SceneManager`を使用できるシーン遷移システムです。
 
-利用者が最終的に必要なシーン集合を宣言すると、`SceneControllerCore<TScene>`が現在管理しているシーンとの差分を求め、不足しているシーンをロードし、不要になったシーンをアンロードします。これらを1回の`LoadAsync`で実行します。
+**Transition**は、必要なSceneをロードし、不要になったSceneをアンロードするUnity向けライブラリです。
 
-シーン識別子には、通常の列挙型、ビットフラグ列挙型、文字列、独自の値型を使用できます。通常の目標集合への遷移では、AddressablesやSceneManager固有のロード・アンロード処理をそれぞれのLoaderが担当し、Coreの差分処理から分離しています。
+通常のenumで最終的に必要なSceneを指定すると、`SceneCollection<TScene>.SetAsync`が現在の管理状態との差分を計算します。不足Sceneをロードした後、不要Sceneをアンロードします。途中で失敗しても成功済みの処理を保持するため、同じTargetを再指定すると残りだけを再試行できます。
 
-## 要件
-- Unity 2021.3 以上
-- [Addressables](https://docs.unity3d.com/Manual/com.unity.addressables.html) 1.19.19 以上
-- [UniTask](https://github.com/Cysharp/UniTask) 2.5.10 以上
-- [UniTaskPlus](https://github.com/AndanteTribe/UniTaskPlus) 0.1.0 以上
+## 必要環境
+
+- Unity 2021.3以降（C# 9 / .NET Standard 2.1）
+- [UniTask](https://github.com/Cysharp/UniTask) 2.5.10以降
+- [Addressables](https://docs.unity3d.com/Packages/com.unity.addressables@1.19/manual/index.html) 1.19.19以降（Addressables追加パッケージを使う場合のみ）
 
 ## インストール
-`Window > Package Manager`からPackage Managerウィンドウを開き、`[+] > Add package from git URL`を選択して以下のURLを入力します。
 
-```
+UniTaskを先にインストールしてください。`Window > Package Manager > [+] > Add package from git URL`から、次を追加します。
+
+```text
 https://github.com/AndanteTribe/Transition.git?path=src/Transition.Unity/Packages/jp.andantetribe.transition
 ```
 
-## セットアップ
+Addressablesを使う場合は、Coreの後に次の追加パッケージもインストールします。
 
-`RestartAsync`を使用する場合は、**`"System"`という名前のシーン**を`File > Build Settings`へ追加してください。`RestartAsync`は、このシーンをアプリケーションの初期シーンとしてSingleモードでロードします。
+```text
+https://github.com/AndanteTribe/Transition.git?path=src/Transition.Unity/Packages/jp.andantetribe.transition.addressables
+```
 
-- Addressablesを使用する場合は、対象シーンをAddressablesへ登録します。
-- `SceneManager`を使用する場合は、対象シーンを`File > Build Settings`へ追加します。
-- 独自asmdefで参照先を明示している場合は、`Transition`を参照します。`AddressablesSceneController`を使用する場合は、`Transition.Addressables`も参照します。
+独自asmdefを使う場合は`Transition`を参照してください。`AddressablesSceneCollection`や`AddressablesBackend`を使うAssemblyには`Transition.Addressables`の参照も必要です。
 
-## クイックスタート
+## Quick Start
 
-次の例では、ビットフラグ形式の識別子とAddressablesを使用します。
+アプリを起動するSceneを`System`として用意し、Collectionの管理対象に含めず、ロードしたままにします。`System`と以下のゲーム用SceneをBuild Settingsに登録してください。
 
 ```csharp
-using System;
 using System.Threading;
 using Cysharp.Threading.Tasks;
 using Transition;
 
-// Flags用Controllerでは、[Flags]とintの基底型が必要です。
-[Flags]
-public enum SceneName : int
+public enum GameScene
 {
-    None  = 0,
-    Title = 1 << 0,
-    Game  = 1 << 1,
-    HUD   = 1 << 2,
+    Title,
+    Game,
+    UI,
 }
 
 public sealed class GameFlow
 {
-    private readonly SceneControllerCore<SceneName> _controller =
-        AddressablesSceneController.CreateFlags<SceneName>();
+    private readonly SceneCollection<GameScene> _scenes =
+        SceneCollection.Create<GameScene>();
 
     public async UniTask RunAsync(CancellationToken cancellationToken)
     {
-        // GameとHUDを加算ロードし、この集合に含まれない管理中Sceneをアンロードします。
-        await _controller.LoadAsync(
-            progress: null,
-            cancellationToken,
-            SceneName.Game | SceneName.HUD);
+        await _scenes.SetAsync(GameScene.Title, GameScene.UI, cancellationToken);
 
-        // GameとHUDをアンロードし、Titleへ遷移します。
-        await _controller.LoadAsync(
-            progress: null,
-            cancellationToken,
-            SceneName.Title);
+        // UIを保持し、GameをロードしてからTitleをアンロードします。
+        await _scenes.SetAsync(GameScene.Game, GameScene.UI, cancellationToken);
 
-        // Flags用Controllerでも、現在状態はSceneSetとして公開されます。
-        var currentFlags = _controller.CurrentScenes.ToFlags();
-
-        await _controller.UnloadAllAsync(progress: null, cancellationToken);
-
-        // 管理中Sceneをアンロードし、SystemをSingleモードでリロードします。
-        await _controller.RestartAsync(
-            progress: null,
-            forceImmediate: false,
-            cancellationToken);
+        // 管理Sceneを解放し、Systemから再スタートします。
+        await _scenes.ResetAsync(cancellationToken);
     }
 }
 ```
 
-## Addressables
+`SceneCollection.Create<TScene>()`はSceneManagerを使用するCollectionを生成します。規定ではenum名をScene名として使用します。値0も通常のScene IDです。BitFlagは使用しないため、32 Sceneという制限はありません。
 
-### 通常のシーン識別子を使用する
+CollectionのAPIはUnityのメインスレッドから呼び、返されたUniTaskをawaitしてください。BackendはCollectionごとに一つ用意し、共有やCollection外からの直接操作をしないでください。
 
-各列挙値がビットの集合ではなく、1つのシーンを表す場合は`CreateScenes`を使用します。`SceneSet`を手動で作らなくても、複数の遷移先をそのまま指定できます。
+## Addressablesでの使用
+
+ゲーム用SceneをAddressablesへ登録し、enum名に一致するAddressを設定します。起動／Reset用SceneはBuild Settingsに置きます。
 
 ```csharp
-public enum GameScene
-{
-    Title,
-    Stage100,
-    UserInterface,
-}
+var scenes = AddressablesSceneCollection.Create<GameScene>();
 
-private readonly SceneControllerCore<GameScene> _controller =
-    AddressablesSceneController.CreateScenes<GameScene>();
-
-await _controller.LoadAsync(
-    cancellationToken,
-    GameScene.Stage100,
-    GameScene.UserInterface);
+await scenes.SetAsync(GameScene.Game, GameScene.UI, cancellationToken);
 ```
 
-既定では`ToString()`の結果をAddressablesのAddressとして使用します。論理的なシーン識別子とAddressablesのAddressが異なる場合は、変換関数を渡します。
+Addressがenum名と異なる場合は変換関数を指定できます。
 
 ```csharp
-private readonly SceneControllerCore<GameScene> _controller =
-    AddressablesSceneController.CreateScenes<GameScene>(static scene => scene switch
+var scenes = AddressablesSceneCollection.Create<GameScene>(
+    getSceneName: static scene => scene switch
     {
-        GameScene.Title         => "Scenes/Title",
-        GameScene.Stage100      => "Scenes/Stage100",
-        GameScene.UserInterface => "Scenes/UI",
-        _ => throw new ArgumentOutOfRangeException(nameof(scene)),
+        GameScene.Title => "Scenes/Title",
+        GameScene.Game  => "Scenes/MainGame",
+        GameScene.UI    => "Scenes/SharedUI",
+        _ => throw new System.ArgumentOutOfRangeException(nameof(scene)),
     });
 ```
 
-## SceneManager
+Addressは、それぞれ異なる単一Sceneを指すようにしてください。複数Sceneを指すLabelは使用しません。異なるenum値が同じ物理Sceneを指す場合、自動では重複除去しません。
 
-Build Settingsに登録されたシーンをAddressables APIなしでロードする場合は、`SceneManagerController`を使用します。
+## SceneManagerでの使用
 
-```csharp
-private readonly SceneControllerCore<GameScene> _controller =
-    SceneManagerController.CreateScenes<GameScene>();
-
-await _controller.LoadAsync(
-    cancellationToken,
-    GameScene.Stage100,
-    GameScene.UserInterface);
-```
-
-既定では`ToString()`の結果をシーン名として使用します。変換関数では、Build Settingsに登録されたシーン名またはパスを返せます。
+`SceneManagerBackend`はAdditiveロードを行い、取得したUnity SceneをBackend内部で管理します。変換関数でBuild Settingsのフルパスを指定できます。
 
 ```csharp
-private readonly SceneControllerCore<GameScene> _controller =
-    SceneManagerController.CreateScenes<GameScene>(static scene => scene switch
+var scenes = SceneCollection.Create<GameScene>(
+    getSceneName: static scene => scene switch
     {
-        GameScene.Title         => "Assets/Scenes/Title.unity",
-        GameScene.Stage100      => "Assets/Scenes/Stage100.unity",
-        GameScene.UserInterface => "Assets/Scenes/UI.unity",
-        _ => throw new ArgumentOutOfRangeException(nameof(scene)),
-    });
+        GameScene.Title => "Assets/Scenes/Title.unity",
+        GameScene.Game  => "Assets/Scenes/Game.unity",
+        GameScene.UI    => "Assets/Scenes/UI.unity",
+        _ => throw new System.ArgumentOutOfRangeException(nameof(scene)),
+    },
+    initialSceneName: "Boot");
 ```
 
-Build Settingsのシーンでもビットフラグ形式を使いたい場合は、`SceneManagerController.CreateFlags<TEnum>()`を使用できます。
+同名Sceneが複数ある場合、短いScene名での指定はエラーになります。フルパスを指定してください。既にロード済みのSceneは取り込みません。Backendが所有する物理Sceneを、外部から重ねてロード／アンロードしないでください。
 
-## ビットフラグ
+## Scene指定と現在状態
 
-ビットフラグを使用すると、複数シーンを簡潔に指定できます。
+1〜5 Sceneには固定引数overloadがあり、最後に省略可能なCancellationTokenを渡せます。
 
 ```csharp
-[Flags]
-public enum SceneName : int
+await scenes.SetAsync(GameScene.Game);
+await scenes.SetAsync(GameScene.Game, GameScene.UI, cancellationToken);
+
+// 重複は最初の出現だけ採用します。
+await scenes.SetAsync(GameScene.Game, GameScene.UI, GameScene.Game);
+
+// 空Target：管理Sceneをすべて解放します。起動Sceneは残ります。
+await scenes.SetAsync(cancellationToken);
+
+bool hasUI = scenes.Contains(GameScene.UI);
+int count = scenes.Count;
+GameScene[] snapshot = scenes.GetCurrentScenes();
+```
+
+`GetCurrentScenes()`は、ロード成功の完了順に並んだ独立した配列を返します。内部Listやlive viewは公開しません。
+
+大きなTargetや事前定義したTargetには`ReadOnlyMemory<TScene>`を使えます。
+
+```csharp
+GameScene[] target = { GameScene.Game, GameScene.UI };
+await scenes.SetAsync(target, cancellationToken);
+```
+
+固定引数版は入力をstruct内へ直接保持し、呼び出しごとのparams配列やHashSetを作りません。Memory版も5件までは直接保持します。6件以上は待機に入る前に専用配列へコピーするため、呼び出し後に元配列を変更しても処理中のTargetは変わりません。遷移やBackend全体のゼロallocationを保証するものではありません。
+
+## Sequential / Parallel
+
+生成時に一度だけ設定します。
+
+```csharp
+var scenes = AddressablesSceneCollection.Create<GameScene>(
+    loadingMode: SceneLoadingMode.Parallel);
+```
+
+- `Sequential`（規定）：不足SceneをTargetの指定順にロードします。先にロードしたSceneへの依存がある場合に使います。
+- `Parallel`：一回のSet内の不足Sceneを並列ロードします。一件が失敗／キャンセルされても、開始済み操作をすべて待ちます。
+- 同じCollectionへのSet／Reset呼び出し自体は常に直列化します。
+- アンロードはロード成功の完了順を逆にした順番で、一件ずつ実行します。
+- Load段階で失敗／キャンセルされた場合、Unload段階には進みません。Unload失敗時も、それ以降のUnloadを止めます。
+
+ParallelではSceneの初期化順を保証しません。複数の失敗は`AggregateException`、キャンセルだけの場合は`OperationCanceledException`として返します。
+
+## 失敗とCancellation
+
+成功済みの処理を保持し、遷移全体のrollbackはしません。
+
+例えば現在が`Title + UI`、Targetが`Game + UI + Audio`のとき、Gameのロード成功後にAudioが失敗すると`Title + UI + Game`が残ります。同じTargetを再指定すれば、Audioだけ再ロードしてからTitleをアンロードします。
+
+Cancellationは、まだ開始していない操作の開始を止めます。開始済み操作はBackendが安定状態に到達するまで待ちます。標準Backendでは、開始済みの物理操作が完了した場合、キャンセル要求が届いていても成功として返します。Collectionはその成功を状態へ反映してからキャンセルを通知します。
+
+ParallelでGameとAudioが成功、UIがキャンセルなら、GameとAudioを管理状態へ残します。古いSceneをアンロードせず、Setはキャンセルとして終了します。例外をcatchした後も、`Contains`・`Count`・`GetCurrentScenes()`で現在状態を確認できます。
+
+## Reset
+
+`ResetAsync`はSetと同じ排他を使います。最初に初期SceneがBuild Settingsにあるかを確認し、Backend経由で管理Sceneをアンロードしてから、Collectionが直接`SceneManager.LoadSceneAsync(..., LoadSceneMode.Single)`を呼びます。
+
+```csharp
+var scenes = SceneCollection.Create<GameScene>(initialSceneName: "Boot");
+
+await scenes.ResetAsync(cancellationToken);
+```
+
+成功後、Collectionの管理状態は空です。Boot／Systemは管理対象外として残り、同じCollection／Backendを再利用できます。
+
+Singleロード開始前まではCancellationを尊重します。開始後は完了まで待ち、その間にTokenがキャンセルされてもResetは成功します。それ以前のUnloadで失敗／キャンセルされた場合、まだ所有しているSceneを再試行のために残します。
+
+SingleロードはCollection外のSceneを含めてUnity全体へ影響します。Resetはアプリ全体の再起動として使い、別Collectionや外部Scene操作と同時実行しないでください。
+
+Unityは最後のSceneをアンロードできません。空TargetやResetを使うため、起動Sceneを管理対象外でロードしたままにしてください。[UnityのUnloadSceneAsync API](https://docs.unity3d.com/2021.3/Documentation/ScriptReference/SceneManagement.SceneManager.UnloadSceneAsync.html)
+
+## Custom Backend
+
+FactoryはCollectionごとに専用の標準Backendを生成します。独自Backendを渡す場合は、`new SceneCollection<GameScene>(backend)`のようにコンストラクタを直接使ってください。
+
+次の2メソッドを実装します。
+
+```csharp
+public interface ISceneBackend<TScene> where TScene : struct, System.Enum
 {
-    None  = 0,
-    Title = 1 << 0,
-    Game  = 1 << 1,
-    HUD   = 1 << 2,
+    UniTask LoadAsync(TScene scene, CancellationToken cancellationToken = default);
+    UniTask UnloadAsync(TScene scene, CancellationToken cancellationToken = default);
 }
-
-var controller = AddressablesSceneController.CreateFlags<SceneName>();
-
-await controller.LoadAsync(
-    progress: null,
-    cancellationToken,
-    SceneName.Game | SceneName.HUD);
 ```
 
-Flags用列挙型は、次の条件を満たす必要があります。
+Backendは一回の呼び出しで一つのSceneだけを扱い、その物理Scene／resourceの所有権を保持します。Target、重複除去、順序、排他、ResetはCollectionが担当します。
 
-- `[Flags]`を付ける
-- 基底型を`int`にする
-- 空の状態には`0`を使用する
-- 個別のシーンごとに1bitを割り当てる
+契約は次のとおりです。
 
-`int`は32bitであるため、ビットフラグ形式で表現できる個別値は最大32個です。この制限があるのはFlags形式だけであり、`CreateScenes`と`SceneSet<TScene>`では、より大きなシーン集合を扱えます。
+| 結果 | 保証する状態 |
+|------|-------------|
+| Load成功 | Sceneが完全にロード済みで、Backendが所有している。 |
+| Load失敗／キャンセル | その操作による新しい所有権が残っておらず、同じIDを再試行できる。 |
+| Unload成功 | Sceneが完全にアンロード済みで、所有権も解放されている。 |
+| Unload失敗／キャンセル | ロード済みSceneと所有権が維持され、再試行できる。 |
 
-明示的に相互変換する場合は、`SceneSet.FromFlags`と`ToFlags`を使用します。
+安全に止められる区間ではTokenを使用して構いません。キャンセルできない地点を越えたら完了まで待って成功を返します。awaitだけをキャンセルし、裏で物理操作を継続させてはいけません。既にUnloadが成功した後でCancellationをthrowすることもしません。
+
+途中停止できないエンジンAPIでは、次の流れになります。
 
 ```csharp
-SceneSet<SceneName> target =
-    SceneSet.FromFlags(SceneName.Game | SceneName.HUD);
-
-SceneName flags = target.ToFlags();
+cancellationToken.ThrowIfCancellationRequested();
+var operation = StartPhysicalLoad(scene);
+// ここからは安全にキャンセルできない。
+await operation.ToUniTask(cancellationToken: CancellationToken.None);
+// Backend内部の所有情報へ記録してから成功を返す。
 ```
 
-`SceneSet.Of(SceneName.Game | SceneName.HUD)`は、複合値を1つの識別子として格納し、個別のフラグへ分解しません。フラグを分解するときは`SceneSet.FromFlags`を使用してください。
+`StartPhysicalLoad`は独自エンジン／resource APIを表す仮の名前です。必要な所有情報の格納領域は物理操作前に確保し、Load失敗時の後始末を終えてからエラーを返してください。
 
-## SceneSet
-
-`SceneSet<TScene>`は、最初に指定されたロード順を維持しながら、重複した識別子を取り除くイミュータブルなコレクションです。
-
-```csharp
-SceneSet<GameScene> target = SceneSet.Of(
-    GameScene.Stage100,
-    GameScene.UserInterface);
-
-await _controller.LoadAsync(
-    target,
-    progress: null,
-    cancellationToken);
-```
-
-再利用するシーン集合へ識別子を追加するときは、`With`を使用します。元の集合は変更されません。
-
-```csharp
-SceneSet<GameScene> sharedUI = SceneSet.Of(
-    GameScene.UserInterface);
-
-SceneSet<GameScene> stage100 = sharedUI.With(
-    GameScene.Stage100);
-
-await _controller.LoadAsync(
-    stage100,
-    progress: null,
-    cancellationToken);
-```
-
-空の遷移先を明示する場合は、`SceneSet<TScene>.Empty`を使用します。空の集合を`LoadAsync`へ渡すと、そのControllerが管理しているすべてのシーンをアンロードします。
-
-```csharp
-await _controller.LoadAsync(
-    SceneSet<GameScene>.Empty,
-    progress: null,
-    cancellationToken);
-```
-
-`CurrentScenes`に含まれ、差分処理の対象になるのは、そのControllerを通してロードしたシーンだけです。外部でロードまたはアンロードされたシーンとは自動的に同期しません。
-
-## 独自Scene Loader
-
-別のロード方式を追加する場合は、`ISceneLoader<TScene>`を実装します。ロードに成功すると、ロード済みシーンの所有権を表す`ISceneHandle`を返します。Controllerは後でこのHandleを使用して、対応するシーンをアンロードします。次のコードは実装の骨組みであり、実際のロード処理とHandleは使用するBackendに合わせて実装します。
-
-```csharp
-public sealed class CustomSceneLoader : ISceneLoader<GameScene>
-{
-    public UniTask<ISceneHandle> LoadAsync(
-        GameScene scene,
-        IProgress<float>? progress,
-        CancellationToken cancellationToken)
-    {
-        // 1つのシーンをロードし、そのライフタイムを返します。
-        throw new NotImplementedException();
-    }
-}
-
-var controller = new SceneControllerCore<GameScene>(new CustomSceneLoader());
-```
-
-Core APIはAddressablesのAddress、`AsyncOperationHandle`、`SceneInstance`、解放用Keyを要求しません。ロード方式固有の所有権は、返された`ISceneHandle`の内部に保持します。
-
-## Cancellation
-
-組み込みLoaderは、シーンのロードを開始する前にCancellationを確認します。UnityまたはAddressablesのロード開始後は、物理的な処理と必要なロールバックを完了してからCancellationを通知します。アンロード開始後についても、物理的な処理の完了を待ってからCancellationを通知します。
-
-## 利用上の注意
-
-- 通常のController操作は直列化されます。`RestartAsync(forceImmediate: true)`はこの直列化を省略するため、同じControllerの別操作と同時に実行しないでください。通常の遷移では`false`を使用します。
-- `IProgress<float>`は、個別のシーン操作ごとの進捗を通知します。複数シーンを扱う場合、遷移全体を表す単調増加の進捗値にはなりません。
-- 異なる論理識別子が同じ物理シーンへ変換されても、自動的に重複とは判断されません。
-- SceneManager用Loaderでは、Unityの`AsyncOperation`から生成された`Scene`を直接取得できないため、別のLoaderから同じシーンを同時にロードする使い方には対応していません。
+Parallelでは異なるIDのLoadが同時に呼ばれます。Backendから自分のCollectionのSet／Resetを呼んでawaitすると、取得中の排他を再度待つためデッドロックします。Unityに関わる所有情報の操作はメインスレッド上で完了させてください。
 
 ## API
 
-### Controller Factory
-
 | メンバー | 説明 |
-|---------|------|
-| `AddressablesSceneController.CreateFlags<TEnum>(getSceneName?)` | ビットフラグを分解するAddressables用Controllerを作成します。 |
-| `AddressablesSceneController.CreateScenes<TScene>(getSceneName)` | 通常のシーン識別子を扱うAddressables用Controllerを作成します。列挙型用Overloadでは`ToString()`を使用します。 |
-| `SceneManagerController.CreateFlags<TEnum>(getSceneName?)` | ビットフラグを分解するSceneManager用Controllerを作成します。 |
-| `SceneManagerController.CreateScenes<TScene>(getSceneName)` | 通常のシーン識別子を扱うSceneManager用Controllerを作成します。列挙型用Overloadでは`ToString()`を使用します。 |
-
-### `SceneControllerCore<TScene>`
-
-| メンバー | 説明 |
-|---------|------|
-| `CurrentScenes` | このControllerが現在管理しているシーンを取得します。 |
-| `LoadAsync(params TScene[] targetScenes)` | 管理中のシーンを指定された識別子の集合へ遷移させます。 |
-| `LoadAsync(CancellationToken cancellationToken, params TScene[] targetScenes)` | Cancellationを受け取り、管理中のシーンを指定された識別子の集合へ遷移させます。 |
-| `LoadAsync(IProgress<float>? progress, CancellationToken cancellationToken, params TScene[] targetScenes)` | 個別のシーン操作の進捗を通知しながら、複数の識別子へ遷移させます。 |
-| `LoadAsync(SceneSet<TScene> targetScenes, IProgress<float>? progress, CancellationToken cancellationToken)` | 明示的に作成したシーン集合へ遷移させます。 |
-| `UnloadAllAsync(IProgress<float>? progress, CancellationToken cancellationToken)` | このControllerが管理しているすべてのシーンをアンロードします。 |
-| `RestartAsync(IProgress<float>? progress, bool forceImmediate, CancellationToken cancellationToken)` | 管理中のシーンをアンロードし、`System`をSingleモードでリロードします。`forceImmediate: true`では処理の直列化を省略します。 |
-
-### `SceneSet`
-
-| メンバー | 説明 |
-|---------|------|
-| `SceneSet.Of(params TScene[] scenes)` | 順序を維持し、重複を取り除いた識別子の集合を作成します。 |
-| `sceneSet.With(params TScene[] scenes)` | 元の集合を変更せず、識別子を追加した新しい集合を作成します。 |
-| `SceneSet.FromFlags(params TEnum[] flags)` | `int`を基底型とする列挙フラグを個別の識別子へ分解します。 |
-| `sceneSet.ToFlags()` | Flags用SceneSetを1つの列挙値へ集約します。 |
-| `SceneSet<TScene>.Empty` | 空の遷移先を取得します。 |
+|----------|------|
+| `SceneCollection.Create<TScene>(getSceneName = null, initialSceneName = "System", loadingMode = Sequential)` | SceneManagerを使用するCollectionを生成する。 |
+| `AddressablesSceneCollection.Create<TScene>(getSceneName = null, initialSceneName = "System", loadingMode = Sequential)` | Addressablesを使用するCollectionを生成する。 |
+| `new SceneCollection<TScene>(backend, initialSceneName = "System", loadingMode = Sequential)` | Collectionを生成する。 |
+| `SetAsync(scene1, ..., scene5, cancellationToken = default)` | 1〜5件の固定引数overload。 |
+| `SetAsync(ReadOnlyMemory<TScene>, cancellationToken = default)` | 任意サイズのTarget。 |
+| `SetAsync(cancellationToken = default)` | 空Targetへ遷移する。 |
+| `ResetAsync(cancellationToken = default)` | 所有Sceneを解放し、初期Sceneを再ロードする。 |
+| `Count` / `Contains(scene)` | 部分成功を含む現在の所有状態を確認する。 |
+| `GetCurrentScenes()` | 独立した配列snapshotを取得する。 |
 
 ## ライセンス
-このライブラリは、MITライセンスで公開しています。
+
+このライブラリはMITライセンスで公開されています。
