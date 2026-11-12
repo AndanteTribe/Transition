@@ -77,9 +77,9 @@
       "depth": 0,
       "source": "embedded",
       "dependencies": {
-        "jp.andantetribe.unitaskplus": "0.1.0",
         "com.cysharp.unitask": "2.5.10",
-        "com.unity.addressables": "1.19.19"
+        "com.unity.addressables": "1.19.19",
+        "jp.andantetribe.unitaskplus": "1.1.1"
       }
     },
     "jp.andantetribe.unitaskplus": {
@@ -89,7 +89,7 @@
       "dependencies": {
         "com.cysharp.unitask": "2.5.10"
       },
-      "hash": "27d12fb40e9d14cc409567eeeec699fa8a3e23f0"
+      "hash": "bf39966811e2d229a6d169deb3950203c997a8c5"
     },
     "com.unity.modules.ai": {
       "version": "1.0.0",
