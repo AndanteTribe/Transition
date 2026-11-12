@@ -7,9 +7,11 @@
   },
   "version": "0.1.0",
   "unity": "2021.3",
-  "description": "Reconciles managed Unity scenes to a requested target collection.",
+  "description": "Loads scene groups through Unity SceneManager or Addressables and unloads obsolete scenes.",
   "license": "MIT",
   "dependencies": {
-    "com.cysharp.unitask": "2.5.10"
+    "com.cysharp.unitask": "2.5.10",
+    "com.unity.addressables": "1.19.19",
+    "jp.andantetribe.unitaskplus": "1.1.1"
   }
 }

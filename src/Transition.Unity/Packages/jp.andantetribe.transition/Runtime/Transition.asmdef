@@ -2,7 +2,11 @@
     "name": "Transition",
     "rootNamespace": "Transition",
     "references": [
-        "UniTask"
+        "UniTask",
+        "UniTaskPlus",
+        "UniTask.Addressables",
+        "Unity.Addressables",
+        "Unity.ResourceManager"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],

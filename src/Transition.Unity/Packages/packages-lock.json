@@ -77,18 +77,19 @@
       "depth": 0,
       "source": "embedded",
       "dependencies": {
-        "com.cysharp.unitask": "2.5.10"
+        "com.cysharp.unitask": "2.5.10",
+        "com.unity.addressables": "1.19.19",
+        "jp.andantetribe.unitaskplus": "1.1.1"
       }
     },
-    "jp.andantetribe.transition.addressables": {
-      "version": "file:jp.andantetribe.transition.addressables",
+    "jp.andantetribe.unitaskplus": {
+      "version": "https://github.com/AndanteTribe/UniTaskPlus.git?path=src/UniTaskPlus.Unity/Packages/jp.andantetribe.unitaskplus",
       "depth": 0,
-      "source": "embedded",
+      "source": "git",
       "dependencies": {
-        "jp.andantetribe.transition": "0.1.0",
-        "com.cysharp.unitask": "2.5.10",
-        "com.unity.addressables": "1.19.19"
-      }
+        "com.cysharp.unitask": "2.5.10"
+      },
+      "hash": "bf39966811e2d229a6d169deb3950203c997a8c5"
     },
     "com.unity.modules.ai": {
       "version": "1.0.0",

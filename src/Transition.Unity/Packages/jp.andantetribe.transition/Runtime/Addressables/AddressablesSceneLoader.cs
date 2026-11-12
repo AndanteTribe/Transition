@@ -11,44 +11,46 @@ using UnityEngine.SceneManagement;
 
 namespace Transition
 {
-    /// <summary>Owns additive Addressables scenes without exposing their handles to the collection.</summary>
+    /// <summary>Loads additive Addressables scenes and retains their handles until unloaded.</summary>
     /// <remarks>
-    /// Use exclusively with one collection on the main thread. Each enum must identify a distinct scene.
+    /// Use exclusively with one SceneGroupLoader on the main thread. Each enum must identify a distinct scene.
     /// Do not externally unload owned scenes. Cancellation is checked before starting Addressables work.
     /// </remarks>
-    public sealed class AddressablesBackend<TScene> : ISceneBackend<TScene> where TScene : struct, Enum
+    public sealed class AddressablesSceneLoader : ISceneLoader
     {
-        private readonly Func<TScene, string> _getSceneName;
-        private readonly Dictionary<TScene, AsyncOperationHandle<SceneInstance>> _scenes = new();
+        private readonly Func<Enum, string> _getSceneAddress;
+        private readonly Dictionary<Enum, AsyncOperationHandle<SceneInstance>> _scenes = new();
 
-        /// <summary>Creates a backend. By default, enum names are Addressables addresses.</summary>
-        public AddressablesBackend(Func<TScene, string>? getSceneName = null) =>
-            _getSceneName = getSceneName ?? (static scene => scene.ToString());
+        /// <summary>Creates a scene loader. By default, enum names are Addressables addresses.</summary>
+        /// <param name="getSceneAddress">Maps scene identifiers to addresses. Defaults to enum names.</param>
+        public AddressablesSceneLoader(Func<Enum, string>? getSceneAddress = null) =>
+            _getSceneAddress = getSceneAddress ?? (static scene => scene.ToString());
 
         /// <inheritdoc />
-        public async UniTask LoadAsync(TScene scene, CancellationToken cancellationToken = default)
+        public async UniTask LoadAsync<TEnum>(TEnum scene, CancellationToken cancellationToken = default)
+            where TEnum : Enum
         {
-            EnsureMainThread();
             cancellationToken.ThrowIfCancellationRequested();
-            var address = _getSceneName(scene);
+            var boxedScene = EnumBoxCache.Get(scene);
+
+            var address = _getSceneAddress(boxedScene);
             if (string.IsNullOrWhiteSpace(address))
             {
-                throw new ArgumentException("The scene name resolver returned an empty address.", nameof(scene));
+                throw new ArgumentException("The scene address resolver returned an empty address.", nameof(scene));
             }
 
             // Reserve before starting: completion only updates an existing dictionary entry.
-            _scenes.Add(scene, default);
+            _scenes.Add(boxedScene, default);
             AsyncOperationHandle<SceneInstance> handle = default;
             try
             {
-                cancellationToken.ThrowIfCancellationRequested();
                 handle = Addressables.LoadSceneAsync(address, LoadSceneMode.Additive);
-                await handle.ToUniTask(cancellationToken: CancellationToken.None);
-                _scenes[scene] = handle;
+                await handle.ToUniTask();
+                _scenes[boxedScene] = handle;
             }
             catch
             {
-                _scenes.Remove(scene);
+                _scenes.Remove(boxedScene);
                 if (handle.IsValid())
                 {
                     // Failed load operations still own a reference. This overload releases the operation;
@@ -61,11 +63,13 @@ namespace Transition
         }
 
         /// <inheritdoc />
-        public async UniTask UnloadAsync(TScene scene, CancellationToken cancellationToken = default)
+        public async UniTask UnloadAsync<TEnum>(TEnum scene, CancellationToken cancellationToken = default)
+            where TEnum : Enum
         {
-            EnsureMainThread();
             cancellationToken.ThrowIfCancellationRequested();
-            if (!_scenes.TryGetValue(scene, out var loadHandle) || !loadHandle.IsValid() || !loadHandle.IsDone)
+            var boxedScene = EnumBoxCache.Get(scene);
+
+            if (!_scenes.TryGetValue(boxedScene, out var loadHandle) || !loadHandle.IsValid())
             {
                 throw new InvalidOperationException($"Scene '{scene}' is not owned or is still loading.");
             }
@@ -80,14 +84,14 @@ namespace Transition
             var unloadHandle = Addressables.UnloadSceneAsync(loadHandle, autoReleaseHandle: false);
             try
             {
-                await unloadHandle.ToUniTask(cancellationToken: CancellationToken.None);
+                await unloadHandle.ToUniTask();
 
                 if (loadedScene.isLoaded)
                 {
                     throw new InvalidOperationException($"Scene '{scene}' is still loaded; its ownership is retained for retry.");
                 }
 
-                _scenes.Remove(scene);
+                _scenes.Remove(boxedScene);
             }
             finally
             {
@@ -96,14 +100,6 @@ namespace Transition
                     // Only release the unload operation. Addressables consumes the original scene reference.
                     Addressables.Release((AsyncOperationHandle)unloadHandle);
                 }
-            }
-        }
-
-        private static void EnsureMainThread()
-        {
-            if (!PlayerLoopHelper.IsMainThread)
-            {
-                throw new InvalidOperationException("AddressablesBackend must be used on Unity's main thread.");
             }
         }
     }
